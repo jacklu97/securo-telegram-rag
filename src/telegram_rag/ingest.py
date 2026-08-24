@@ -28,13 +28,22 @@ def _sender_name(sender) -> str:
 
 
 class Ingester:
-    def __init__(self, store: Store, embedder: Embedder):
+    def __init__(self, store: Store, embedder: Embedder, status: dict[str, str] | None = None):
         self.store = store
         self.embedder = embedder
         self.client = TelegramClient(
             StringSession(settings.session_string), settings.api_id, settings.api_hash
         )
+        self._status = status if status is not None else {}
         self.status = "starting"
+
+    @property
+    def status(self) -> str:
+        return self._status.get("status", "")
+
+    @status.setter
+    def status(self, value: str) -> None:
+        self._status["status"] = value
 
     async def run(self) -> None:
         await self.client.connect()
@@ -49,6 +58,8 @@ class Ingester:
         logger.info("indexing group %s (%s)", getattr(entity, "title", group), chat_id)
 
         await self._backfill(entity, chat_id)
+        # Set BEFORE run_until_disconnected: that call blocks for the life of
+        # the connection, so anything after it never runs in practice.
         self.status = f"live ({self.store.count()} messages indexed)"
 
         @self.client.on(events.NewMessage(chats=entity))

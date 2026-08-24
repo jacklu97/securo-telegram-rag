@@ -25,8 +25,9 @@ TOOLS: list[dict[str, Any]] = [
             "Semantic search over the indexed Telegram finance group. Use it to find "
             "promotions, offers ('promociones', 'MSI', 'meses sin intereses', cashback, "
             "descuentos) and community advice. Query in the group's language (Spanish). "
-            "For card-specific questions, call once per bank or card name (e.g. 'promociones "
-            "BBVA', 'MSI Banorte') after fetching the user's accounts."
+            "Results are already the best matches in the whole corpus: do NOT repeat "
+            "similar queries — at most one call per distinct bank/topic, then answer "
+            "with what you have."
         ),
         "inputSchema": {
             "type": "object",
@@ -118,19 +119,44 @@ async def _call_tool(params: dict[str, Any], store: Store, embedder: Embedder, r
         if not query:
             return result(_tool_result({"results": []}, "empty query", is_error=True))
         limit = max(1, min(int(args.get("limit") or 8), 20))
+        # Small models loop when results are long or repetitive: truncate each
+        # message and drop near-duplicates so a round of results stays terse.
+        MAX_CHARS = 280
         since = None
         if args.get("since_days"):
             cutoff = datetime.now(timezone.utc) - timedelta(days=int(args["since_days"]))
             since = cutoff.strftime("%Y-%m-%d %H:%M")
         [qvec] = await embedder.embed_async([query])
-        hits = store.search(qvec, limit=limit, since=since)
+        hits = store.search(qvec, limit=limit * 2, since=since)
+        seen: set[str] = set()
+        unique = []
+        for h in hits:
+            key = h.text[:120].lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(h)
+            if len(unique) >= limit:
+                break
         data = {
             "results": [
-                {"date": h.date, "sender": h.sender, "text": h.text, "score": round(h.score, 3)}
-                for h in hits
+                {
+                    "date": h.date,
+                    "sender": h.sender,
+                    "text": h.text[:MAX_CHARS] + ("…" if len(h.text) > MAX_CHARS else ""),
+                    "score": round(h.score, 3),
+                }
+                for h in unique
             ]
         }
-        text = "\n\n".join(f"[{h.date}] {h.sender}: {h.text}" for h in hits) or "no matches"
+        lines = "\n\n".join(
+            f"[{h.date}] {h.sender}: {h.text[:MAX_CHARS]}" for h in unique
+        )
+        text = (
+            lines + "\n\n(These are the best matches in the corpus — answer now, do not search again for the same topic.)"
+            if unique
+            else "no matches — do not retry the same query"
+        )
         return result(_tool_result(data, text))
 
     return error(-32602, f"unknown tool: {name}")

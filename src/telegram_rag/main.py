@@ -34,13 +34,11 @@ async def _run() -> None:
             ingest_status["status"] = f"disabled — missing env: {', '.join(missing)}"
             logger.error(ingest_status["status"])
             return
-        ingester = Ingester(store, embedder)
+        ingester = Ingester(store, embedder, ingest_status)
         while True:
             try:
                 ingester.status = "connecting"
-                ingest_status["status"] = ingester.status
                 await ingester.run()
-                ingest_status["status"] = ingester.status
             except Exception:  # noqa: BLE001
                 logger.exception("ingester crashed; retrying in 60s")
                 ingest_status["status"] = "crashed — retrying"
