@@ -129,15 +129,18 @@ class Store:
 
         terms = _query_terms(query_text)
         if terms:
+            # Keyword weight scales with specificity: 1-2 terms means an
+            # exact-term lookup (acronym, bank name) where a literal hit must
+            # clear the ~0.8 cosine noise floor; generic multi-term queries
+            # ("promociones tarjeta de crédito") match half the corpus, so a
+            # flat 0.9 would just reward short keyword-dense chatter.
+            weight = 0.9 if len(terms) <= 2 else 0.45
             bonus = np.fromiter(
                 (_keyword_overlap(text, terms) for _, _, text in rows),
                 dtype=np.float32,
                 count=len(rows),
             )
-            # Overlap can add up to ~0.9 for a full exact match — enough for a
-            # literal hit to beat the ~0.8 similarity noise floor of short chat
-            # messages, without drowning semantic ranking on longer queries.
-            scores = scores + bonus
+            scores = scores + weight * bonus
 
         order = np.argsort(-scores)
         hits: list[Hit] = []
@@ -200,4 +203,4 @@ def _keyword_overlap(text: str, terms: list[str]) -> float:
             matched += 1
     if not matched:
         return 0.0
-    return 0.9 * (matched / len(terms))
+    return matched / len(terms)
