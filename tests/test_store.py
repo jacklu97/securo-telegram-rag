@@ -119,3 +119,19 @@ def test_hybrid_no_terms_falls_back_to_cosine(store, embedder):
     # stopword-only query text contributes no bonus
     hits = store.search(qvec, limit=1, query_text="que como para")
     assert hits[0].text.startswith("BBVA")
+
+
+def test_promo_intent_prefers_announcements_over_questions(store, embedder):
+    _add(store, embedder, 1, "¿La promoción aplica para tarjetas de crédito BBVA?")
+    _add(store, embedder, 2, "BBVA: 20% de bonificación en restaurantes, válido hasta el 31 de agosto pagando con tu tarjeta de crédito participante")
+
+    [qvec] = embedder.embed(["promociones bbva"])
+    hits = store.search(qvec, limit=2, query_text="promociones BBVA tarjeta")
+    assert "bonificación" in hits[0].text
+
+
+def test_non_promo_query_gets_no_announcement_boost(store, embedder):
+    from telegram_rag.store import query_is_promo_intent
+    assert query_is_promo_intent("promociones BBVA")
+    assert query_is_promo_intent("hay descuentos en Amazon?")
+    assert not query_is_promo_intent("que significa SV")

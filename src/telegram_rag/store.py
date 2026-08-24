@@ -106,6 +106,7 @@ class Store:
         limit: int,
         since: str | None = None,
         query_text: str = "",
+        promo_intent: bool | None = None,
     ) -> list[Hit]:
         with self._lock:
             if self._matrix is None:
@@ -116,6 +117,15 @@ class Store:
         norms = np.linalg.norm(matrix, axis=1)
         norms[norms == 0] = 1.0
         scores = (matrix @ q) / norms
+
+        if promo_intent is None:
+            promo_intent = query_is_promo_intent(query_text)
+        if promo_intent:
+            scores = scores + np.fromiter(
+                (_announcement_score(text) for _, _, text in rows),
+                dtype=np.float32,
+                count=len(rows),
+            )
 
         terms = _query_terms(query_text)
         if terms:
@@ -150,6 +160,31 @@ _STOPWORDS = {
 def _query_terms(query_text: str) -> list[str]:
     terms = [t for t in re.findall(r"[\wáéíóúñü]+", query_text.lower()) if len(t) >= 2]
     return [t for t in terms if t not in _STOPWORDS]
+
+
+# Signals that a message ANNOUNCES a promotion rather than asks about one.
+# Chat corpora are dominated by questions ("¿aplica para TDC?"), which share
+# vocabulary with promo queries and would otherwise outrank the actual offers.
+_PROMO_QUERY = re.compile(r"promo|ofert|descuent|msi|cashback|bonificaci|benefic", re.I)
+_PROMO_SIGNALS = re.compile(
+    r"\d+\s*%|\d+\s*msi|meses sin intereses|bonificaci[oó]n|cashback|"
+    r"v[aá]lido|vigencia|termina|hasta el \d|c[oó]digo|cup[oó]n",
+    re.I,
+)
+
+
+def query_is_promo_intent(query_text: str) -> bool:
+    return bool(_PROMO_QUERY.search(query_text))
+
+
+def _announcement_score(text: str) -> float:
+    score = 0.0
+    signals = len(_PROMO_SIGNALS.findall(text))
+    if signals:
+        score += min(0.3, 0.15 * signals)
+    if len(text) > 120:  # announcements run long; drive-by questions don't
+        score += 0.1
+    return score
 
 
 def _keyword_overlap(text: str, terms: list[str]) -> float:
