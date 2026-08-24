@@ -22,12 +22,13 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "search_group_messages",
         "description": (
-            "Semantic search over the indexed Telegram finance group. Use it to find "
-            "promotions, offers ('promociones', 'MSI', 'meses sin intereses', cashback, "
-            "descuentos) and community advice. Query in the group's language (Spanish). "
-            "Results are already the best matches in the whole corpus: do NOT repeat "
-            "similar queries — at most one call per distinct bank/topic, then answer "
-            "with what you have."
+            "Search the indexed Telegram finance group. Works for ANY topic: slang or "
+            "abbreviations used in the group, product opinions, promotions ('promociones', "
+            "'MSI', cashback, descuentos), or community advice. Search directly with the "
+            "user's own term — no bank name is required. Add a bank name only when the "
+            "question is about that bank's cards. Query in Spanish. Results are already "
+            "the best matches in the whole corpus: do NOT repeat similar queries; one "
+            "call per distinct topic, then answer with what you have."
         ),
         "inputSchema": {
             "type": "object",
