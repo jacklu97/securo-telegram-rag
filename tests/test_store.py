@@ -89,3 +89,33 @@ def test_latest_date(store, embedder):
     _add(store, embedder, 1, "BBVA promo", date=datetime(2026, 1, 1, tzinfo=timezone.utc))
     _add(store, embedder, 2, "Banorte promo", date=datetime(2026, 6, 1, tzinfo=timezone.utc))
     assert store.latest_date().startswith("2026-06-01")
+
+
+def test_hybrid_acronym_beats_semantic_noise(store, embedder):
+    # An acronym query gives cosine no signal (no keyword dims in the fake
+    # embedder), which mirrors reality: dense similarity between "SV" and
+    # short chat messages is noise. The keyword bonus must decide.
+    _add(store, embedder, 1, "El clima está horrible hoy")
+    _add(store, embedder, 2, "Noupe, con SV no pasa nada")
+
+    [qvec] = embedder.embed(["SV significado"])
+    hits = store.search(qvec, limit=2, query_text="SV significado")
+    assert "SV" in hits[0].text
+
+
+def test_hybrid_short_token_respects_word_boundary(store, embedder):
+    _add(store, embedder, 1, "misvacaciones fueron caras")  # 'sv' inside a word
+    _add(store, embedder, 2, "con SV no aplica la promo")
+
+    [qvec] = embedder.embed(["algo sin señal"])
+    hits = store.search(qvec, limit=2, query_text="sv")
+    assert "SV" in hits[0].text
+
+
+def test_hybrid_no_terms_falls_back_to_cosine(store, embedder):
+    _add(store, embedder, 1, "BBVA promo restaurantes")
+    _add(store, embedder, 2, "Banorte MSI Amazon")
+    [qvec] = embedder.embed(["bbva"])
+    # stopword-only query text contributes no bonus
+    hits = store.search(qvec, limit=1, query_text="que como para")
+    assert hits[0].text.startswith("BBVA")

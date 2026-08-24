@@ -127,7 +127,7 @@ async def _call_tool(params: dict[str, Any], store: Store, embedder: Embedder, r
             cutoff = datetime.now(timezone.utc) - timedelta(days=int(args["since_days"]))
             since = cutoff.strftime("%Y-%m-%d %H:%M")
         [qvec] = await embedder.embed_async([query])
-        hits = store.search(qvec, limit=limit * 2, since=since)
+        hits = store.search(qvec, limit=limit * 2, since=since, query_text=query)
         seen: set[str] = set()
         unique = []
         for h in hits:

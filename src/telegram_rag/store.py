@@ -1,12 +1,18 @@
-"""SQLite persistence + in-memory vector index.
+"""SQLite persistence + in-memory hybrid (semantic + keyword) index.
 
 The corpus is one Telegram group (thousands of messages, not millions), so
-brute-force cosine over a numpy matrix is simpler and faster than running a
+brute-force scoring over a numpy matrix is simpler and faster than running a
 vector database. Embeddings are stored as float32 blobs and mirrored into
 memory; the mirror refreshes incrementally as the ingester adds rows.
+
+Ranking is hybrid: cosine similarity plus a keyword-overlap bonus. Dense
+embeddings alone fail hard on acronyms and exact terms ("SV", "MSI",
+bank names) — short chat messages cluster in embedding space and noise
+outranks the one message that literally contains the term.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -93,7 +99,14 @@ class Store:
                 vec[None, :] if self._matrix is None else np.vstack([self._matrix, vec])
             )
 
-    def search(self, query_vec: np.ndarray, *, limit: int, since: str | None = None) -> list[Hit]:
+    def search(
+        self,
+        query_vec: np.ndarray,
+        *,
+        limit: int,
+        since: str | None = None,
+        query_text: str = "",
+    ) -> list[Hit]:
         with self._lock:
             if self._matrix is None:
                 return []
@@ -103,6 +116,19 @@ class Store:
         norms = np.linalg.norm(matrix, axis=1)
         norms[norms == 0] = 1.0
         scores = (matrix @ q) / norms
+
+        terms = _query_terms(query_text)
+        if terms:
+            bonus = np.fromiter(
+                (_keyword_overlap(text, terms) for _, _, text in rows),
+                dtype=np.float32,
+                count=len(rows),
+            )
+            # Overlap can add up to ~0.9 for a full exact match — enough for a
+            # literal hit to beat the ~0.8 similarity noise floor of short chat
+            # messages, without drowning semantic ranking on longer queries.
+            scores = scores + bonus
+
         order = np.argsort(-scores)
         hits: list[Hit] = []
         for idx in order:
@@ -113,3 +139,30 @@ class Store:
             if len(hits) >= limit:
                 break
         return hits
+
+
+_STOPWORDS = {
+    "que", "como", "para", "por", "con", "los", "las", "del", "una", "uno",
+    "the", "and", "for", "grupo", "telegram", "mensajes", "sobre",
+}
+
+
+def _query_terms(query_text: str) -> list[str]:
+    terms = [t for t in re.findall(r"[\wáéíóúñü]+", query_text.lower()) if len(t) >= 2]
+    return [t for t in terms if t not in _STOPWORDS]
+
+
+def _keyword_overlap(text: str, terms: list[str]) -> float:
+    lowered = text.lower()
+    matched = 0
+    for term in terms:
+        if len(term) <= 3:
+            # Word-boundary match for short tokens/acronyms so "sv" doesn't
+            # fire inside unrelated words.
+            if re.search(rf"\b{re.escape(term)}\b", lowered):
+                matched += 1
+        elif term in lowered:
+            matched += 1
+    if not matched:
+        return 0.0
+    return 0.9 * (matched / len(terms))
